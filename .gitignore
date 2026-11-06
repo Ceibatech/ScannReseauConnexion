@@ -1,0 +1,4 @@
+poste/config/mulcv-scan.json
+poste/numerisation/*/*
+!poste/numerisation/*/LISEZMOI.txt
+dist/

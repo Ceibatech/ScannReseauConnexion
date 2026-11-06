@@ -1,0 +1,2 @@
+postes\poste-3.json : modele fourni par le depot (adresse du scanner, compte du poste 3).
+mulcv-scan.json : configuration du poste, ecrite par installer.cmd (contient le secret, jamais versionne).

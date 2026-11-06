@@ -1,0 +1,5 @@
+Lots en attente denvoi vers MULCV.
+numeriser.cmd y assemble chaque lot (LOT-<date>-<heure>.pdf) puis lenvoie aussitot :
+le dossier reste vide sauf si MULCV ou le reseau est indisponible ; le lot repart
+alors au prochain lancement de numeriser.cmd (ou tout de suite avec la surveillance).
+Variante : un PDF depose ici (scan vers dossier, HP Smart...) est envoye par la surveillance.

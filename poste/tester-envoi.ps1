@@ -1,0 +1,40 @@
+﻿<#
+.SYNOPSIS
+  Envoie un fichier vers MULCV comme un lot numerise sur le poste 3.
+  MULCV lit le QR du carton ou du dossier dans le fichier. Si le fichier n'a pas de QR,
+  indiquer l'identifiant du dossier : il sert alors de nom de fichier.
+#>
+param(
+  [string]$Fichier = $env:MULCV_FICHIER,
+  [string]$Dossier = $env:MULCV_DOSSIER
+)
+$ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($Fichier)) { throw "Indiquer le fichier a envoyer." }
+$Dossier = "$Dossier".Trim()
+if ($Dossier -and $Dossier -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') { throw "Identifiant de dossier invalide : $Dossier" }
+$racine = Split-Path -Parent $MyInvocation.MyCommand.Path
+$exe = Join-Path $racine 'bin\mulcv-scan.exe'
+if (-not (Test-Path (Join-Path $racine 'config\mulcv-scan.json'))) { throw "Le poste n'est pas installe : lancer d'abord installer.cmd" }
+$Fichier = $Fichier.Trim().Trim('"')
+# Accepte aussi une adresse file:///C:/... (glisser depuis un navigateur) et un chemin relatif
+# a C:\MULCV ou a C:\MULCV\numerisation (ex. 3-erreurs\0001.pdf).
+if ($Fichier -match '^file:') { $Fichier = ([Uri]$Fichier).LocalPath }
+if (-not (Test-Path -LiteralPath $Fichier)) {
+  foreach ($base in @($racine, (Join-Path $racine 'numerisation'))) {
+    $essai = Join-Path $base $Fichier
+    if (Test-Path -LiteralPath $essai) { $Fichier = $essai; break }
+  }
+}
+if (-not (Test-Path -LiteralPath $Fichier)) { throw "Fichier introuvable : $Fichier" }
+$Fichier = (Resolve-Path -LiteralPath $Fichier).Path
+$extension = [IO.Path]::GetExtension($Fichier).ToLower()
+if ($Dossier) { $nom = $Dossier + $extension } else { $nom = 'TEST_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + $extension }
+$copie = Join-Path $racine ('numerisation\1-a-envoyer\' + $nom)
+Copy-Item $Fichier $copie -Force
+& $exe $copie
+Write-Host ''
+if ($LASTEXITCODE -eq 0) {
+  Write-Host "Accepte par MULCV (detail dans journal\mulcv-scan.log). Copie locale : numerisation\2-envoyes"
+} else {
+  Write-Host "Echec : voir numerisation\3-erreurs et journal\mulcv-scan.log"
+}

@@ -1,0 +1,1 @@
+Journal des envois : mulcv-scan.log (une ligne par lot numerise, envoye ou refuse).

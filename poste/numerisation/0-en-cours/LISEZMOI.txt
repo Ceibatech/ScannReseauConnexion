@@ -1,0 +1,3 @@
+Pages du lot en cours de numerisation (une image par page, dans lordre).
+Elles protegent le lot dune coupure : au lancement suivant, numeriser.cmd propose de le reprendre.
+Ne rien deposer ni supprimer ici a la main.
