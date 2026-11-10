@@ -6,14 +6,15 @@
 .DESCRIPTION
   Cree C:\MULCV et toute son arborescence (bin, config, numerisation, journal),
   y copie le programme, ecrit la configuration du poste (secret + adresse du scanner),
-  verifie la connexion a MULCV et au scanner, puis pose un raccourci
-  "Numeriser MULCV" sur le Bureau.
+  verifie la connexion a MULCV et au scanner, pose un raccourci "Numeriser MULCV"
+  sur le Bureau et installe la tache d'envoi : chaque lot complet (aucune feuille
+  depuis 10 minutes) part tout seul au SAE.
   Relancer apres un "git pull" met a jour le programme sans toucher a la configuration
   ni aux fichiers numerises.
 
 .EXAMPLE
   installer.cmd                (double-clic)
-  powershell -ExecutionPolicy Bypass -File install.ps1 -Scanner 192.168.1.40 -Surveillance
+  powershell -ExecutionPolicy Bypass -File install.ps1 -Scanner 192.168.1.40
 
 .NOTES
   A lancer avec le compte Windows de l'operateur du poste.
@@ -24,7 +25,7 @@ param(
   [string]$Destination = 'C:\MULCV',
   # Adresse du scanner (nom reseau, IP ou URL). Par defaut : celle de l'imprimante associee a ce PC.
   [string]$Scanner = '',
-  # Tache planifiee qui envoie ce qui est depose dans numerisation\1-a-envoyer (scan vers dossier, HP Smart...).
+  # Conserve pour les anciens appels : la tache d'envoi est maintenant toujours installee.
   [switch]$Surveillance
 )
 $ErrorActionPreference = 'Stop'
@@ -108,18 +109,21 @@ $raccourci.WorkingDirectory = $Destination
 $raccourci.Description = 'Numeriser sur le scanner reseau et deposer dans MULCV (poste 3)'
 $raccourci.Save()
 
-if ($Surveillance) {
-  $action = New-ScheduledTaskAction -Execute $exe -Argument '-watch' -WorkingDirectory $Destination
-  $declencheur = New-ScheduledTaskTrigger -AtLogOn -User ([Security.Principal.WindowsIdentity]::GetCurrent().Name)
-  $reglages = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-  Register-ScheduledTask -TaskName 'MULCV depot scanner reseau' -Action $action -Trigger $declencheur -Settings $reglages -Force | Out-Null
-  Start-ScheduledTask -TaskName 'MULCV depot scanner reseau'
-  Write-Host "Surveillance active sur $Destination\numerisation\1-a-envoyer."
-}
+# 5. Tache d'envoi : l'imprimante prend une feuille a la fois ; chaque feuille reste sur le PC et le lot
+#    ne part au SAE qu'une fois complet (aucune nouvelle feuille depuis lotInactiviteMinutes, 10 par defaut).
+Unregister-ScheduledTask -TaskName 'MULCV depot scanner reseau' -Confirm:$false -ErrorAction SilentlyContinue
+$action = New-ScheduledTaskAction -Execute $exe -Argument '-job' -WorkingDirectory $Destination
+$declencheur = New-ScheduledTaskTrigger -AtLogOn -User ([Security.Principal.WindowsIdentity]::GetCurrent().Name)
+$reglages = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName 'MULCV envoi des lots' -Action $action -Trigger $declencheur -Settings $reglages -Force | Out-Null
+Stop-ScheduledTask -TaskName 'MULCV envoi des lots' -ErrorAction SilentlyContinue
+Start-ScheduledTask -TaskName 'MULCV envoi des lots'
+Write-Host "Tache d'envoi active : chaque lot complet part tout seul au SAE."
 
 Write-Host ''
 Write-Host "Poste 3 installe dans $Destination. Connexion a MULCV et au scanner verifiees."
 Write-Host ''
-Write-Host 'Pour numeriser : double-clic sur "Numeriser MULCV" (Bureau) ou sur'
+Write-Host 'Pour numeriser : double-clic sur "Numeriser MULCV" (Bureau), une feuille a la fois ;'
+Write-Host 'le lot part tout seul au SAE 10 minutes apres la derniere feuille. Programme :'
 Write-Host "  $Destination\numeriser.cmd"
 Write-Host "Essai sans scanner : $Destination\tester-envoi.cmd"

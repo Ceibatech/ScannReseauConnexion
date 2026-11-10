@@ -19,6 +19,7 @@
 //
 //	mulcv-scan.exe -scan                     numérisation interactive (numeriser.cmd)
 //	mulcv-scan.exe -test                     vérifie la configuration, MULCV et le scanner
+//	mulcv-scan.exe -job                      tâche d'envoi : chaque lot complet part tout seul
 //	mulcv-scan.exe -watch                    surveille numerisation\1-a-envoyer
 //	mulcv-scan.exe <fichier> [fichiers...]   envoie des fichiers déjà numérisés
 package main
@@ -53,6 +54,8 @@ type config struct {
 	WorkDir      string        `json:"workDir"`
 	LogFile      string        `json:"logFile"`
 	Scanner      scannerConfig `json:"scanner"`
+	// Minutes sans nouvelle feuille au bout desquelles le lot est jugé complet et envoyé (10 par défaut).
+	LotIdleMinutes int `json:"lotInactiviteMinutes"`
 }
 
 const maxBytes = 25 << 20
@@ -72,6 +75,7 @@ func main() {
 	watch := flag.Bool("watch", false, "surveiller numerisation\\1-a-envoyer")
 	test := flag.Bool("test", false, "vérifier la configuration, la connexion à MULCV et le scanner")
 	scanMode := flag.Bool("scan", false, "numériser depuis le scanner réseau et envoyer à MULCV")
+	job := flag.Bool("job", false, "tâche d'envoi : envoie chaque lot complet et les lots en attente")
 	flag.Parse()
 
 	if err := load(*configPath); err != nil {
@@ -88,6 +92,8 @@ func main() {
 		}
 	case *scanMode:
 		interactive(os.Stdin, os.Stdout)
+	case *job:
+		runJob()
 	case *watch:
 		watchDir(cfg.InboxDir)
 	default:
@@ -149,6 +155,9 @@ func load(path string) error {
 	if err := cfg.Scanner.normalize(); err != nil {
 		return fmt.Errorf("scanner : %w", err)
 	}
+	if cfg.LotIdleMinutes < 0 || cfg.LotIdleMinutes > 240 {
+		return errors.New("lotInactiviteMinutes : entre 1 et 240 (10 par défaut)")
+	}
 	// Emplacements par défaut : ceux du dépôt cloné, déjà présents.
 	defaults(&cfg.InboxDir, "numerisation", "1-a-envoyer")
 	defaults(&cfg.WorkDir, "numerisation", "0-en-cours")
@@ -180,6 +189,14 @@ func watchDir(dir string) {
 	log.Printf("Surveillance de %s", dir)
 	sizes := map[string]int64{}
 	for {
+		sendStable(dir, sizes)
+		time.Sleep(5 * time.Second)
+	}
+}
+
+// sendStable envoie les fichiers du dossier dont la taille n'a pas bougé depuis le passage précédent.
+func sendStable(dir string, sizes map[string]int64) {
+	{
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			log.Printf("Lecture de %s impossible : %v", dir, err)
@@ -208,7 +225,6 @@ func watchDir(dir string) {
 				delete(sizes, path)
 			}
 		}
-		time.Sleep(5 * time.Second)
 	}
 }
 

@@ -336,10 +336,10 @@ func TestAnInterruptedBatchIsResumedAtNextLaunch(t *testing.T) {
 	if len(workPages()) != 2 || len(*received) != 0 {
 		t.Fatalf("pages conservées : %d", len(workPages()))
 	}
-	// Second lancement : reprise, une page de plus, envoi.
+	// Second lancement : les feuilles s'ajoutent au lot en cours, puis envoi.
 	var out bytes.Buffer
-	interactive(strings.NewReader("\n\nT\n"), &out)
-	if len(*received) != 1 || !strings.HasSuffix((*received)[0], ":3") || !strings.Contains(out.String(), "lot interrompu de 2 page(s)") {
+	interactive(strings.NewReader("\nT\n"), &out)
+	if len(*received) != 1 || !strings.HasSuffix((*received)[0], ":3") || !strings.Contains(out.String(), "lot de 2 page(s) est en cours") {
 		t.Fatalf("reçu : %v\n%s", *received, out.String())
 	}
 }
@@ -362,5 +362,74 @@ func TestABatchWaitingForTheNetworkLeavesAtNextLaunch(t *testing.T) {
 	interactive(strings.NewReader("Q\n"), io.Discard)
 	if len(*received) != 1 || !strings.HasPrefix((*received)[0], "LOT-20261106-170000.pdf") {
 		t.Fatalf("reçu : %v", *received)
+	}
+}
+
+// age recule la date des feuilles du lot en cours, comme si la dernière datait de « ago ».
+func age(t *testing.T, ago time.Duration) {
+	for i, path := range workPages() {
+		at := time.Now().Add(-ago - time.Duration(len(workPages())-i)*time.Second)
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestTheJobSendsALotOnlyOnceItIsComplete(t *testing.T) {
+	_, received, _ := station(t, &fakeScanner{caps: platenCaps, perJob: 1})
+	cfg.LotIdleMinutes = 10
+	// L'opérateur numérise trois feuilles une à une et quitte sans rien taper pour envoyer.
+	interactive(strings.NewReader("\n\n\nQ\n"), io.Discard)
+	if finishIdleLot(time.Now()) || len(*received) != 0 {
+		t.Fatal("la dernière feuille date d'à l'instant : le lot n'est pas fini, rien ne part")
+	}
+	age(t, 9*time.Minute)
+	if finishIdleLot(time.Now()) || len(*received) != 0 {
+		t.Fatal("9 minutes : toujours en cours")
+	}
+	age(t, 11*time.Minute)
+	if !finishIdleLot(time.Now()) || len(*received) != 1 || !strings.HasSuffix((*received)[0], ":3") {
+		t.Fatalf("lot complet envoyé en un seul PDF : %v", *received)
+	}
+	if len(workPages()) != 0 || finishIdleLot(time.Now()) || len(*received) != 1 {
+		t.Fatal("un lot ne part qu'une fois")
+	}
+}
+
+func TestPagesDroppedByThePrinterJoinTheLotInScanOrder(t *testing.T) {
+	_, received, _ := station(t, &fakeScanner{caps: platenCaps, perJob: 1})
+	// « Numériser vers un dossier » depuis l'écran de l'imprimante : des JPEG au nom libre.
+	for i, name := range []string{"scan_0003.jpg", "scan_0001.JPG", "scan_0002.jpeg"} {
+		path := filepath.Join(cfg.WorkDir, name)
+		os.WriteFile(path, page(t, true, uint8(50*(i+1))), 0o640)
+		at := time.Now().Add(-time.Hour + time.Duration([]int{3, 1, 2}[i])*time.Minute)
+		os.Chtimes(path, at, at)
+	}
+	os.WriteFile(filepath.Join(cfg.WorkDir, "LISEZMOI.txt"), []byte("x"), 0o640)
+	order := workPages()
+	if len(order) != 3 || filepath.Base(order[0]) != "scan_0001.JPG" || filepath.Base(order[2]) != "scan_0003.jpg" {
+		t.Fatalf("ordre de numérisation (date) : %v", order)
+	}
+	if !finishIdleLot(time.Now()) || len(*received) != 1 || !strings.HasSuffix((*received)[0], ":3") {
+		t.Fatalf("reçu : %v", *received)
+	}
+}
+
+func TestTheOperatorNeverResendsALotTheJobAlreadySent(t *testing.T) {
+	_, received, _ := station(t, &fakeScanner{caps: platenCaps, perJob: 1})
+	cfg.LotIdleMinutes = 1
+	interactive(strings.NewReader("\n\nQ\n"), io.Discard)
+	age(t, 2*time.Minute)
+	finishIdleLot(time.Now())
+	var out bytes.Buffer
+	interactive(strings.NewReader("T\nQ\n"), &out)
+	if len(*received) != 1 || !strings.Contains(out.String(), "Le lot est vide") {
+		t.Fatalf("reçu : %v\n%s", *received, out.String())
+	}
+}
+
+func TestTheIdleDelayIsBounded(t *testing.T) {
+	if (config{}).lotIdle() != 10*time.Minute || (config{LotIdleMinutes: 3}).lotIdle() != 3*time.Minute {
+		t.Fatal("délai d'inactivité")
 	}
 }

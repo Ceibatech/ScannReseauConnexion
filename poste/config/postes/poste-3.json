@@ -8,5 +8,6 @@
     "colorMode": "Grayscale8",
     "paper": "A4",
     "source": "auto"
-  }
+  },
+  "lotInactiviteMinutes": 10
 }

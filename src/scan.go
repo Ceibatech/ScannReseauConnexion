@@ -52,28 +52,20 @@ func interactive(in io.Reader, out io.Writer) {
 	}
 	say("Scanner prêt : %s.", orUnknown(caps.MakeModel))
 
-	pages := loadWork()
-	if len(pages) > 0 {
-		say("Un lot interrompu de %d page(s) a été retrouvé.", len(pages))
-		answer, ok := ask("[Entrée] le reprendre   [A] l'abandonner (mis de côté dans 3-erreurs) : ")
-		if !ok {
-			return
-		}
-		if answer == "A" {
-			setAsideWork("lot interrompu abandonné par l'opérateur")
-			pages = nil
-		}
+	if waiting := len(workPages()); waiting > 0 {
+		say("Un lot de %d page(s) est en cours : les feuilles numérisées maintenant s'y ajoutent.", waiting)
 	}
 
+	idle := cfg.lotIdle()
 	say("")
-	say("Ordre habituel : fiche du CARTON, étiquette du DOSSIER, pièces du dossier, SÉPARATEUR")
-	say("entre deux pièces, étiquette du dossier suivant… Un lot peut contenir tout un carton.")
+	say("Une feuille à la fois sur la vitre : fiche du CARTON, étiquette du DOSSIER, pages du dossier,")
+	say("SÉPARATEUR entre deux pièces, dossier suivant… Rien ne part tant que le lot n'est pas fini :")
+	say("%s après la dernière feuille, le lot complet est envoyé tout seul au SAE.", minutes(idle))
 	for {
-		size := 0
-		for _, p := range pages {
-			size += len(p)
-		}
-		answer, _ := ask(fmt.Sprintf("\nLot : %d page(s), %.1f Mo.   [Entrée] numériser   [T] terminer et envoyer   [A] annuler le lot   [Q] quitter : ",
+		// Le lot est relu sur le disque à chaque tour : la tâche d'envoi a pu l'expédier entre-temps.
+		pages := workPages()
+		size := totalSize(pages)
+		answer, _ := ask(fmt.Sprintf("\nLot : %d page(s), %.1f Mo.   [Entrée] numériser la feuille   [T] envoyer maintenant   [A] annuler le lot   [Q] quitter : ",
 			len(pages), float64(size)/(1<<20)))
 		switch answer {
 		case "":
@@ -86,13 +78,12 @@ func interactive(in io.Reader, out io.Writer) {
 			if source == "Feeder" {
 				say("Numérisation du chargeur…")
 			} else {
-				say("Numérisation de la vitre…")
+				say("Numérisation de la feuille…")
 			}
 			got, err := scanJob(caps, source, func(n int) { say("  page %d reçue", len(pages)+n) })
 			for _, page := range got {
-				pages = append(pages, page)
-				if err := saveWorkPage(len(pages), page); err != nil {
-					say("  Attention : copie de sécurité de la page impossible : %v", err)
+				if err := saveWorkPage(page); err != nil {
+					say("  Page non enregistrée sur le PC, à renumériser : %v", err)
 				}
 			}
 			if err != nil {
@@ -103,27 +94,110 @@ func interactive(in io.Reader, out io.Writer) {
 				say("Le lot est vide.")
 				continue
 			}
-			if finish(pages, say) {
-				pages = nil
-			}
+			sendLot(say)
 		case "A":
 			if len(pages) == 0 {
 				continue
 			}
 			if confirm, _ := ask(fmt.Sprintf("Abandonner les %d page(s) du lot ? [O/n] : ", len(pages))); confirm == "" || confirm == "O" {
 				setAsideWork("lot annulé par l'opérateur")
-				pages = nil
 				say("Lot mis de côté dans numerisation\\3-erreurs.")
 			}
 		case "Q":
 			if len(pages) > 0 {
-				say("Les %d page(s) du lot en cours sont conservées : elles seront proposées au prochain lancement.", len(pages))
+				say("Les %d page(s) restent sur le PC : le lot partira tout seul %s après la dernière feuille,", len(pages), minutes(idle))
+				say("ou complétez-le au prochain lancement.")
 			}
 			return
 		default:
 			say("Réponse inconnue : Entrée, T, A ou Q.")
 		}
 	}
+}
+
+func minutes(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%d secondes", int(d.Seconds()))
+	}
+	if d == time.Minute {
+		return "1 minute"
+	}
+	return fmt.Sprintf("%d minutes", int(d.Minutes()))
+}
+
+func totalSize(paths []string) int64 {
+	var size int64
+	for _, path := range paths {
+		if info, err := os.Stat(path); err == nil {
+			size += info.Size()
+		}
+	}
+	return size
+}
+
+// sendLot assemble le lot en cours et l'envoie, sous le verrou d'envoi du poste.
+func sendLot(say func(string, ...any)) {
+	unlock := lock()
+	defer unlock()
+	path, n, err := assembleLot()
+	if err != nil {
+		say("Assemblage du lot impossible : %v", err)
+		return
+	}
+	if path == "" {
+		say("Le lot est vide (déjà envoyé par la tâche d'envoi ?).")
+		return
+	}
+	name := filepath.Base(path)
+	log.Printf("%s : lot de %d page(s) assemblé", name, n)
+	sent := process(path)
+	switch {
+	case sent:
+		say("Lot envoyé à MULCV (détail dans journal\\mulcv-scan.log).")
+	case exists(path):
+		say("MULCV injoignable : le lot reste dans numerisation\\1-a-envoyer et repartira tout seul.")
+	default:
+		say("Lot refusé par MULCV : voir numerisation\\3-erreurs\\%s.txt, corriger la pile et la renumériser.", name)
+	}
+}
+
+// assembleLot fait un PDF des pages en cours (dans l'ordre de numérisation), le dépose dans
+// 1-a-envoyer et retire ces pages. À appeler sous le verrou d'envoi. Chemin vide : rien à assembler.
+func assembleLot() (string, int, error) {
+	paths := workPages()
+	if len(paths) == 0 {
+		return "", 0, nil
+	}
+	var pages [][]byte
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", 0, err
+		}
+		if len(data) > 0 {
+			pages = append(pages, data)
+		}
+	}
+	pdf, err := buildPDF(pages, cfg.Scanner.Resolution)
+	if err != nil {
+		return "", 0, err
+	}
+	name := batchPrefix + time.Now().Format("20060102-150405") + ".pdf"
+	path := filepath.Join(cfg.InboxDir, name)
+	for i := 1; exists(path); i++ {
+		path = filepath.Join(cfg.InboxDir, fmt.Sprintf("%s%s-%d.pdf", batchPrefix, time.Now().Format("20060102-150405"), i))
+	}
+	// Écrit sous un autre nom puis renommé : la surveillance ne voit jamais un PDF incomplet.
+	if err := os.WriteFile(path+".part", pdf, 0o640); err != nil {
+		return "", 0, err
+	}
+	if err := os.Rename(path+".part", path); err != nil {
+		return "", 0, err
+	}
+	for _, page := range paths {
+		_ = os.Remove(page)
+	}
+	return path, len(pages), nil
 }
 
 // pickSource choisit la vitre ou le chargeur selon la configuration et le papier présent.
@@ -138,41 +212,6 @@ func pickSource(c capabilities) string {
 		return "Feeder"
 	}
 	return "Platen"
-}
-
-// finish assemble le lot en PDF, le dépose dans 1-a-envoyer et l'envoie. Il renvoie true
-// quand le lot n'est plus à garder en mémoire (envoyé, refusé ou en attente de réseau).
-func finish(pages [][]byte, say func(string, ...any)) bool {
-	pdf, err := buildPDF(pages, cfg.Scanner.Resolution)
-	if err != nil {
-		say("Assemblage du PDF impossible : %v", err)
-		return false
-	}
-	name := batchPrefix + time.Now().Format("20060102-150405") + ".pdf"
-	path := filepath.Join(cfg.InboxDir, name)
-	// Écrit sous un autre nom puis renommé : la surveillance ne voit jamais un PDF incomplet.
-	if err := os.WriteFile(path+".part", pdf, 0o640); err != nil {
-		say("Écriture de %s impossible : %v", name, err)
-		return false
-	}
-	if err := os.Rename(path+".part", path); err != nil {
-		say("Écriture de %s impossible : %v", name, err)
-		return false
-	}
-	clearWork()
-	log.Printf("%s : lot de %d page(s) assemblé", name, len(pages))
-	unlock := lock()
-	sent := process(path)
-	unlock()
-	switch {
-	case sent:
-		say("Lot envoyé à MULCV (détail dans journal\\mulcv-scan.log).")
-	case exists(path):
-		say("MULCV injoignable : le lot reste dans numerisation\\1-a-envoyer et repartira au prochain lancement.")
-	default:
-		say("Lot refusé par MULCV : voir numerisation\\3-erreurs\\%s.txt, corriger la pile et la renumériser.", name)
-	}
-	return true
 }
 
 // sendPending renvoie les fichiers restés dans 1-a-envoyer (réseau ou MULCV indisponible).
@@ -205,7 +244,15 @@ func exists(path string) bool {
 	return err == nil
 }
 
-func saveWorkPage(n int, page []byte) error {
+// saveWorkPage écrit une feuille du lot en cours, numérotée à la suite.
+func saveWorkPage(page []byte) error {
+	n := 1
+	for _, path := range workPages() {
+		var k int
+		if _, err := fmt.Sscanf(filepath.Base(path), "page-%d.jpg", &k); err == nil && k >= n {
+			n = k + 1
+		}
+	}
 	path := filepath.Join(cfg.WorkDir, fmt.Sprintf("page-%04d.jpg", n))
 	if err := os.WriteFile(path+".part", page, 0o640); err != nil {
 		return err
@@ -213,26 +260,38 @@ func saveWorkPage(n int, page []byte) error {
 	return os.Rename(path+".part", path)
 }
 
+// workPages : les feuilles du lot en cours, dans l'ordre de numérisation. Ce sont les pages
+// numérisées par ce programme et les JPEG qu'y dépose l'imprimante (« numériser vers un dossier »).
 func workPages() []string {
-	paths, _ := filepath.Glob(filepath.Join(cfg.WorkDir, "page-*.jpg"))
-	sort.Strings(paths)
-	return paths
-}
-
-func loadWork() [][]byte {
-	var pages [][]byte
-	for _, path := range workPages() {
-		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-			pages = append(pages, data)
+	entries, err := os.ReadDir(cfg.WorkDir)
+	if err != nil {
+		return nil
+	}
+	type page struct {
+		path string
+		at   time.Time
+	}
+	var pages []page
+	for _, entry := range entries {
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if entry.IsDir() || (ext != ".jpg" && ext != ".jpeg") {
+			continue
+		}
+		if info, err := entry.Info(); err == nil && info.Size() > 0 {
+			pages = append(pages, page{filepath.Join(cfg.WorkDir, entry.Name()), info.ModTime()})
 		}
 	}
-	return pages
-}
-
-func clearWork() {
-	for _, path := range workPages() {
-		_ = os.Remove(path)
+	sort.SliceStable(pages, func(i, j int) bool {
+		if !pages[i].at.Equal(pages[j].at) {
+			return pages[i].at.Before(pages[j].at)
+		}
+		return pages[i].path < pages[j].path
+	})
+	out := make([]string, len(pages))
+	for i, p := range pages {
+		out[i] = p.path
 	}
+	return out
 }
 
 // setAsideWork déplace les pages du lot dans 3-erreurs au lieu de les effacer.

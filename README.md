@@ -32,20 +32,27 @@ Rien n'est à installer côté imprimante : il suffit qu'elle soit sur le même 
 
 ## Numériser
 
-Double-clic sur **Numeriser MULCV** :
+L'imprimante prend **une feuille à la fois**. Rien ne part au SAE tant que le lot n'est pas fini :
+
+1. Double-clic sur **Numeriser MULCV**.
+2. Poser la feuille sur la vitre, **Entrée**. Feuille suivante, **Entrée**… dans l'ordre (voir ci-dessous).
+   Chaque feuille est seulement gardée sur le PC, dans `numerisation\0-en-cours`.
+3. Quand le carton ou le dossier est fini, ne rien faire : **10 minutes après la dernière feuille**,
+   la tâche **MULCV envoi des lots** assemble toutes les feuilles dans l'ordre en **un seul PDF** et
+   l'envoie au SAE. L'opérateur peut fermer la fenêtre.
 
 ```
-Lot : 0 page(s), 0.0 Mo.   [Entrée] numériser   [T] terminer et envoyer   [A] annuler le lot   [Q] quitter
+Lot : 0 page(s), 0.0 Mo.   [Entrée] numériser la feuille   [T] envoyer maintenant   [A] annuler le lot   [Q] quitter
 ```
 
-- Poser la feuille sur la vitre, **Entrée** : la page est ajoutée au lot. Recommencer pour
-  chaque feuille, dans l'ordre. (Si un modèle avec chargeur est utilisé et qu'il est garni,
-  tout le chargeur est numérisé d'un coup.)
-- **T** : le lot devient un seul PDF `LOT-<date>-<heure>.pdf`, envoyé aussitôt à MULCV.
-- **A** : annule le lot ; les pages sont mises de côté dans `3-erreurs\lot-abandonne-…`,
-  jamais effacées.
-- **Q** : quitte. Un lot non envoyé est conservé et proposé au lancement suivant (chaque page
-  est écrite dans `numerisation\0-en-cours` dès sa réception : une coupure ne perd rien).
+- **T** envoie le lot tout de suite, sans attendre les 10 minutes (facultatif).
+- **A** annule le lot ; les feuilles sont mises de côté dans `3-erreurs\lot-abandonne-…`, jamais effacées.
+- **Q** quitte ; les feuilles restent sur le PC et le lot part quand même 10 minutes après la dernière.
+- Une pause de plus de 10 minutes au milieu d'un dossier envoie la première partie ; la suite, numérisée
+  ensuite, est rattachée par MULCV au dossier en cours. Le délai se règle dans
+  `config\mulcv-scan.json` (`"lotInactiviteMinutes": 10`, de 1 à 240), puis redémarrer la session.
+- Variante sans le PC : « Numériser vers un dossier » depuis l'écran de l'imprimante, en **JPEG**, vers
+  `C:\MULCV\numerisation\0-en-cours` (partage réseau). Les feuilles s'ajoutent au lot de la même façon.
 
 ### Ordre des feuilles (identique aux postes 1 et 2)
 
@@ -82,7 +89,7 @@ C:\MULCV\
 │   ├── postes\poste-3.json     ← modèle
 │   └── mulcv-scan.json         ← configuration du poste, avec le secret (lisible par l'opérateur seul)
 ├── numerisation\
-│   ├── 0-en-cours\             ← pages du lot en cours (reprise après coupure)
+│   ├── 0-en-cours\             ← feuilles du lot en cours ; le lot part 10 min après la dernière
 │   ├── 1-a-envoyer\            ← lots en attente si MULCV ou le réseau est indisponible
 │   ├── 2-envoyes\              ← lots bien arrivés dans MULCV (copie locale)
 │   └── 3-erreurs\              ← lots refusés + un .txt qui explique pourquoi
@@ -108,20 +115,14 @@ Modifier ce fichier puis lancer `tester-connexion.cmd`.
    (`GET /eSCL/ScannerCapabilities`).
 2. À chaque Entrée : `POST /eSCL/ScanJobs` (vitre ou chargeur, niveaux de gris, 300 ppp, A4)
    puis `GET …/NextDocument` jusqu'à la dernière page, en JPEG.
-3. À **T** : les JPEG sont assemblés en PDF **sans réencodage** (aucune perte pour l'OCR),
-   déposé dans `numerisation\1-a-envoyer`.
+3. Lot complet (aucune feuille depuis 10 minutes, ou **T**) : la tâche **MULCV envoi des lots**
+   (`mulcv-scan.exe -job`, lancée à l'ouverture de session) assemble les JPEG en PDF **sans
+   réencodage** (aucune perte pour l'OCR), déposé dans `numerisation\1-a-envoyer`.
 4. Le programme s'identifie auprès de Keycloak avec `mulcv-depot-poste3` et envoie le PDF à
    `POST /api/v1/intake/scans` ; MULCV lit les QR et range dans
    **`Scan / Production / <zone> / <conteneur> / <carton> / <dossier>`**.
 5. Le PDF passe dans `2-envoyes`, ou `3-erreurs` avec la raison. Si MULCV ou le réseau est
    indisponible, il reste dans `1-a-envoyer` et repart au lancement suivant.
-
-### Variante sans pilotage (dossier surveillé)
-
-Si l'on préfère lancer les numérisations depuis l'écran de l'imprimante ou HP Smart, les
-enregistrer en PDF dans `C:\MULCV\numerisation\1-a-envoyer` et installer avec la surveillance :
-`powershell -ExecutionPolicy Bypass -File install.ps1 -Surveillance`. Chaque PDF déposé est
-envoyé dès que sa taille ne bouge plus.
 
 ## Dépannage
 

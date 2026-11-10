@@ -1,3 +1,5 @@
-Pages du lot en cours de numerisation (une image par page, dans lordre).
-Elles protegent le lot dune coupure : au lancement suivant, numeriser.cmd propose de le reprendre.
-Ne rien deposer ni supprimer ici a la main.
+Feuilles du lot en cours, une image par feuille, dans l'ordre de numerisation.
+L'imprimante prend une feuille a la fois : rien ne part au SAE tant que le lot n'est pas fini.
+Quand aucune feuille n'est arrivee depuis 10 minutes, la tache "MULCV envoi des lots" assemble
+le lot en un seul PDF et l'envoie. Les JPEG deposes ici par l'imprimante (numeriser vers un
+dossier) s'ajoutent au lot de la meme facon. Ne rien supprimer ici a la main.
