@@ -66,9 +66,15 @@ func finishIdleLot(now time.Time) bool {
 func runJob() {
 	log.Printf("Tâche d'envoi : lot envoyé %s après la dernière feuille", cfg.lotIdle())
 	sizes := map[string]int64{}
+	var cleaned time.Time
 	for {
 		finishIdleLot(time.Now())
 		sendStable(cfg.InboxDir, sizes)
+		// Le PC a peu de place : nettoyage au démarrage puis toutes les heures.
+		if time.Since(cleaned) > time.Hour {
+			purge(time.Now())
+			cleaned = time.Now()
+		}
 		time.Sleep(jobTick)
 	}
 }

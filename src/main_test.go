@@ -64,8 +64,12 @@ func TestTheDossierIdComesFromThePaperStreamFileName(t *testing.T) {
 	if !process(path) || got != "DOS-000456" {
 		t.Fatalf("dossier %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(cfg.SentDir, "DOS-000456_0001.pdf")); err != nil {
-		t.Fatal("le fichier envoyé doit être archivé")
+	// Le PC a peu de place : un fichier déposé dans MULCV n'est pas gardé.
+	if _, err := os.Stat(filepath.Join(cfg.SentDir, "DOS-000456_0001.pdf")); err == nil {
+		t.Fatal("le fichier déposé doit être supprimé du PC")
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("le fichier déposé ne doit pas rester à envoyer")
 	}
 }
 
@@ -127,8 +131,8 @@ func TestAnyPaperStreamNameIsSentAndMulcvReadsTheQr(t *testing.T) {
 		if !process(scan(t, dir, name)) {
 			t.Fatalf("%s doit être accepté", name)
 		}
-		if _, err := os.Stat(filepath.Join(cfg.SentDir, name)); err != nil {
-			t.Fatalf("%s doit être archivé", name)
+		if _, err := os.Stat(filepath.Join(cfg.SentDir, name)); err == nil {
+			t.Fatalf("%s déposé : pas de copie sur le PC", name)
 		}
 	}
 	if hints[0] != "CCM_02112026" || present[1] || present[2] {

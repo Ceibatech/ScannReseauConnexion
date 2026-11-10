@@ -1,3 +1,3 @@
-Fichiers deposes avec succes dans MULCV (copie locale conservee).
-Dans MULCV : Scan / Production / <zone> / <carton> / <dossier>.
-Ce dossier peut etre vide de temps en temps.
+Le PC a peu de place : un lot dont MULCV a confirme le depot est supprime du PC (il est dans le SAE).
+Ce dossier reste vide, sauf si config\mulcv-scan.json indique "conserverEnvoyesJours" (de 1 a 365) :
+les lots y sont alors gardes ce nombre de jours, puis supprimes par la tache d'envoi.

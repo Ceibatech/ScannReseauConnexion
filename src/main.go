@@ -56,6 +56,10 @@ type config struct {
 	Scanner      scannerConfig `json:"scanner"`
 	// Minutes sans nouvelle feuille au bout desquelles le lot est jugé complet et envoyé (10 par défaut).
 	LotIdleMinutes int `json:"lotInactiviteMinutes"`
+	// Jours de conservation sur le PC d'un lot déposé dans MULCV : 0 (défaut) = supprimé dès le dépôt confirmé.
+	KeepSentDays int `json:"conserverEnvoyesJours"`
+	// Jours de conservation des lots refusés ou abandonnés (3-erreurs) : 30 par défaut.
+	KeepErrorDays int `json:"conserverErreursJours"`
 }
 
 const maxBytes = 25 << 20
@@ -155,6 +159,9 @@ func load(path string) error {
 	if err := cfg.Scanner.normalize(); err != nil {
 		return fmt.Errorf("scanner : %w", err)
 	}
+	if cfg.KeepSentDays < 0 || cfg.KeepSentDays > 365 || cfg.KeepErrorDays < 0 || cfg.KeepErrorDays > 365 {
+		return errors.New("conserverEnvoyesJours et conserverErreursJours : de 0 à 365 jours")
+	}
 	if cfg.LotIdleMinutes < 0 || cfg.LotIdleMinutes > 240 {
 		return errors.New("lotInactiviteMinutes : entre 1 et 240 (10 par défaut)")
 	}
@@ -169,6 +176,7 @@ func load(path string) error {
 			return err
 		}
 	}
+	rotateLog()
 	{
 		file, err := os.OpenFile(cfg.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
 		if err != nil {
@@ -263,7 +271,7 @@ func process(path string) bool {
 		switch {
 		case err == nil && (status == http.StatusCreated || status == http.StatusOK):
 			log.Printf("%s : %s", base, outcome(body))
-			return move(path, cfg.SentDir)
+			return sentDone(path)
 		case err == nil && status == http.StatusUnauthorized:
 			token = "" // jeton expiré : on en redemande un
 			last = errors.New("session expirée")

@@ -91,10 +91,23 @@ C:\MULCV\
 ├── numerisation\
 │   ├── 0-en-cours\             ← feuilles du lot en cours ; le lot part 10 min après la dernière
 │   ├── 1-a-envoyer\            ← lots en attente si MULCV ou le réseau est indisponible
-│   ├── 2-envoyes\              ← lots bien arrivés dans MULCV (copie locale)
-│   └── 3-erreurs\              ← lots refusés + un .txt qui explique pourquoi
-└── journal\mulcv-scan.log      ← une ligne par lot
+│   ├── 2-envoyes\              ← vide : un lot déposé dans MULCV est supprimé du PC
+│   └── 3-erreurs\              ← lots refusés + un .txt qui explique pourquoi (gardés 30 jours)
+└── journal\mulcv-scan.log      ← une ligne par lot (archivé au-delà de 5 Mo)
 ```
+
+## Place sur le PC
+
+Le poste a peu de place, la tâche d'envoi la libère toute seule :
+
+- **lot déposé** : dès que MULCV confirme le dépôt, le PDF est **supprimé du PC** (il est dans le SAE) ;
+- **feuilles du lot** : supprimées dès qu'elles sont assemblées dans le PDF ;
+- **lots refusés ou abandonnés** (`3-erreurs`) : gardés **30 jours** pour être corrigés, puis supprimés ;
+- **journal** : au-delà de 5 Mo, il devient `mulcv-scan.log.1` (un seul ancien journal gardé).
+
+Réglable dans `config\mulcv-scan.json` : `"conserverEnvoyesJours": 0` (garder une copie des lots
+déposés pendant 1 à 365 jours) et `"conserverErreursJours": 30`. Un lot qui n'a pas pu partir (réseau,
+MULCV indisponible) n'est **jamais** supprimé : il reste dans `1-a-envoyer` jusqu'à son dépôt.
 
 ## Réglages du scanner (`config\mulcv-scan.json`, bloc `scanner`)
 
@@ -121,7 +134,7 @@ Modifier ce fichier puis lancer `tester-connexion.cmd`.
 4. Le programme s'identifie auprès de Keycloak avec `mulcv-depot-poste3` et envoie le PDF à
    `POST /api/v1/intake/scans` ; MULCV lit les QR et range dans
    **`Scan / Production / <zone> / <conteneur> / <carton> / <dossier>`**.
-5. Le PDF passe dans `2-envoyes`, ou `3-erreurs` avec la raison. Si MULCV ou le réseau est
+5. Dépôt confirmé : le PDF est supprimé du PC ; refusé : il passe dans `3-erreurs` avec la raison. Si MULCV ou le réseau est
    indisponible, il reste dans `1-a-envoyer` et repart au lancement suivant.
 
 ## Dépannage

@@ -9,5 +9,7 @@
     "paper": "A4",
     "source": "auto"
   },
-  "lotInactiviteMinutes": 10
+  "lotInactiviteMinutes": 10,
+  "conserverEnvoyesJours": 0,
+  "conserverErreursJours": 30
 }

@@ -323,9 +323,9 @@ func TestABatchOfFlatbedPagesBecomesOneDepositedPdf(t *testing.T) {
 	if len(workPages()) != 0 {
 		t.Fatal("les pages de travail doivent être effacées après l'envoi")
 	}
-	sent, _ := filepath.Glob(filepath.Join(dir, "envoyes", "LOT-*.pdf"))
-	if len(sent) != 1 || !strings.Contains(out.String(), "Lot envoyé à MULCV") {
-		t.Fatalf("copie locale : %v\n%s", sent, out.String())
+	kept, _ := filepath.Glob(filepath.Join(dir, "*", "LOT-*.pdf"))
+	if len(kept) != 0 || !strings.Contains(out.String(), "Lot envoyé à MULCV") {
+		t.Fatalf("aucune copie du lot ne reste sur le PC : %v\n%s", kept, out.String())
 	}
 }
 
@@ -431,5 +431,52 @@ func TestTheOperatorNeverResendsALotTheJobAlreadySent(t *testing.T) {
 func TestTheIdleDelayIsBounded(t *testing.T) {
 	if (config{}).lotIdle() != 10*time.Minute || (config{LotIdleMinutes: 3}).lotIdle() != 3*time.Minute {
 		t.Fatal("délai d'inactivité")
+	}
+}
+
+func TestOldFilesAreCleanedBecauseThePCIsShortOfSpace(t *testing.T) {
+	dir := t.TempDir()
+	cfg = config{SentDir: filepath.Join(dir, "envoyes"), ErrorDir: filepath.Join(dir, "erreurs"), LogFile: filepath.Join(dir, "scan.log"), KeepSentDays: 7}
+	os.MkdirAll(cfg.SentDir, 0o750)
+	os.MkdirAll(filepath.Join(cfg.ErrorDir, "lot-abandonne-old"), 0o750)
+	write := func(path string, age time.Duration) {
+		os.WriteFile(path, []byte("x"), 0o640)
+		at := time.Now().Add(-age)
+		os.Chtimes(path, at, at)
+	}
+	write(filepath.Join(cfg.SentDir, "LOT-vieux.pdf"), 8*24*time.Hour)
+	write(filepath.Join(cfg.SentDir, "LOT-recent.pdf"), 2*24*time.Hour)
+	write(filepath.Join(cfg.SentDir, "LISEZMOI.txt"), 400*24*time.Hour)
+	write(filepath.Join(cfg.ErrorDir, "LOT-refuse.pdf"), 31*24*time.Hour)
+	write(filepath.Join(cfg.ErrorDir, "LOT-refuse-recent.pdf"), 3*24*time.Hour)
+	old := time.Now().Add(-40 * 24 * time.Hour)
+	os.Chtimes(filepath.Join(cfg.ErrorDir, "lot-abandonne-old"), old, old)
+	os.WriteFile(cfg.LogFile, bytes.Repeat([]byte("ligne\n"), maxLogBytes/6+10), 0o640)
+	purge(time.Now())
+	left := func(d string) []string {
+		e, _ := os.ReadDir(d)
+		var n []string
+		for _, x := range e {
+			n = append(n, x.Name())
+		}
+		return n
+	}
+	if got := strings.Join(left(cfg.SentDir), ","); got != "LISEZMOI.txt,LOT-recent.pdf" {
+		t.Fatalf("envoyés : %s", got)
+	}
+	if got := strings.Join(left(cfg.ErrorDir), ","); got != "LOT-refuse-recent.pdf" {
+		t.Fatalf("erreurs (30 jours) : %s", got)
+	}
+	if info, _ := os.Stat(cfg.LogFile); info.Size() != 0 {
+		t.Fatal("journal trop gros : vidé")
+	}
+	if info, err := os.Stat(cfg.LogFile + ".1"); err != nil || info.Size() < maxLogBytes {
+		t.Fatal("ancien journal gardé une fois")
+	}
+	// Par défaut (0 jour), rien n'est gardé dans 2-envoyes.
+	cfg.KeepSentDays = 0
+	purge(time.Now())
+	if got := strings.Join(left(cfg.SentDir), ","); got != "LISEZMOI.txt" {
+		t.Fatalf("envoyés, défaut : %s", got)
 	}
 }
